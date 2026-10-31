@@ -14,13 +14,11 @@ base_url = os.getenv('PAYPAL_BASE_URL')
 
 # Getting OAuth Access Token
 def get_access_token():
-    try:
-        response = requests.post(f'{base_url}/v1/oauth2/token', auth=(client_id, client_secret), headers=h, data=d)
-        response.raise_for_status()
-        data = response.json()
-        return data['access_token']
-    except requests.exceptions.HTTPError as err:
-        raise 
+    response = requests.post(f'{base_url}/v1/oauth2/token', auth=(client_id, client_secret), headers=h, data=d)
+    response.raise_for_status()
+    data = response.json()
+    return data['access_token']
+
 
 
 # Creating PayPal order
@@ -31,6 +29,7 @@ def create_order(amount, currency, request_id):
         "Content-Type": "application/json", 
         "PayPal-Request-Id": f"{request_id}",
         "Authorization": f"Bearer {access_token}",
+        "Prefer": "return=representation"
     }
     body = {
         "intent": "AUTHORIZE",
@@ -46,16 +45,21 @@ def create_order(amount, currency, request_id):
         }
     }
 
-    try:
-        response = requests.post(url, json = body, headers = headers, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        return data
-    except requests.exceptions.HTTPError as err:
-        raise
-    except requests.exceptions.Timeout:
-        raise
-    except requests.exceptions.ConnectionError:
-        raise
-    except requests.exceptions.RequestException:
-        raise
+    response = requests.post(url, json = body, headers = headers, timeout=15)
+    response.raise_for_status()
+    data = response.json()
+    return data
+
+
+
+def get_order_details(order_id):
+    url = f"{base_url}/v2/checkout/orders/{order_id}"
+    access_token = get_access_token()
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+    }
+
+    response = requests.get(url, headers = headers, timeout=15)
+    response.raise_for_status()
+    data = response.json()
+    return data
