@@ -14,7 +14,12 @@ base_url = os.getenv('PAYPAL_BASE_URL')
 
 # Getting OAuth Access Token
 def get_access_token():
-    response = requests.post(f'{base_url}/v1/oauth2/token', auth=(client_id, client_secret), headers=h, data=d)
+    response = requests.post(
+        f'{base_url}/v1/oauth2/token', 
+        auth=(client_id, client_secret), 
+        headers=h, 
+        data=d,
+        timeout=15)
     response.raise_for_status()
     data = response.json()
     return data['access_token']
@@ -25,7 +30,7 @@ def create_order(amount, currency, request_id):
     access_token = get_access_token()
     url = f"{base_url}/v2/checkout/orders"
     headers = {
-        "Content-Type": "application/json", 
+        "content-type": "application/json", 
         "PayPal-Request-Id": f"{request_id}",
         "Authorization": f"Bearer {access_token}",
         "Prefer": "return=representation",
@@ -69,7 +74,7 @@ def authorize_order(order_id, request_id):
     url = f"{base_url}/v2/checkout/orders/{order_id}/authorize"
     access_token = get_access_token()
     headers = {
-        "Content-Type": "application/json",
+        "content-type": "application/json",
         "Authorization": f"Bearer {access_token}",
         "PayPal-Request-Id": f"{request_id}",
         "Prefer": "return=representation",
@@ -91,7 +96,7 @@ def capture_authorization(authorization_id, request_id):
         "final_capture": True,
     }
     headers = {
-        "Content-Type": "application/json", 
+        "content-type": "application/json", 
         "Authorization": f"Bearer {access_token}",
         "PayPal-Request-Id": f"{request_id}", 
         "Prefer": "return=representation", 
