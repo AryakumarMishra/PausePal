@@ -1,6 +1,8 @@
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from decimal import Decimal
+from datetime import datetime, timezone
+import uuid
 
 from models import Transaction
 
@@ -42,7 +44,12 @@ def get_transaction(db: Session, paypal_order_id: str):
 
 
 # Authorizing the Transaction in Database
-def authorize_transaction(db: Session, paypal_order_id: str, paypal_authorization_id: str) -> bool:
+def authorize_transaction(
+        db: Session, 
+        paypal_order_id: str, 
+        paypal_authorization_id: str, 
+        grace_deadline: datetime
+    ) -> bool:
     try:
         statement = update(Transaction).where(
             Transaction.paypal_order_id == paypal_order_id,
@@ -50,6 +57,7 @@ def authorize_transaction(db: Session, paypal_order_id: str, paypal_authorizatio
         ).values(
             status="AUTHORIZED",
             paypal_authorization_id=paypal_authorization_id,
+            grace_deadline=grace_deadline
         )
 
         result = db.execute(statement)
@@ -83,6 +91,63 @@ def transition_transaction_status(
         db.commit()
 
         return result.rowcount == 1
+    except Exception:
+        db.rollback()
+        raise
+
+
+
+# Claiming the Void transaction
+def claim_void_transaction(
+        db: Session, 
+        paypal_order_id: str,
+    ) -> str | None:
+    void_request_id = str(uuid.uuid4())
+
+    statement = update(Transaction).where(
+        Transaction.paypal_order_id == paypal_order_id,
+        Transaction.status == "AUTHORIZED",
+        Transaction.grace_deadline > datetime.now(timezone.utc)
+    ).values(
+        status = "VOID_PENDING",
+        void_request_id = void_request_id,
+    ).execution_options(synchronize_session=False)
+
+    try:
+        result = db.execute(statement)
+
+        if result.rowcount != 1:
+            db.rollback()
+            return None
+        
+        db.commit()
+        return void_request_id
+    
+    except Exception:
+        db.rollback()
+        raise
+
+
+def complete_void_transaction(
+        db: Session, 
+        paypal_order_id: str,
+    ) -> bool:
+    statement = update(Transaction).where(
+        Transaction.paypal_order_id == paypal_order_id,
+        Transaction.status == "VOID_PENDING",
+    ).values(status = "VOIDED")
+
+    try:
+        result = db.execute(statement)
+
+        if result.rowcount != 1:
+            db.rollback()
+            return False
+        
+        db.commit()
+
+        return True
+    
     except Exception:
         db.rollback()
         raise

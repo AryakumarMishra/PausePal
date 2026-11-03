@@ -2,10 +2,22 @@ import uuid
 from fastapi import FastAPI, Query, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from datetime import datetime, timedelta, timezone
 
-from paypal_client import create_order, get_order_details, authorize_order
+from paypal_client import (
+    create_order, 
+    get_order_details, 
+    authorize_order, 
+    void_authorization
+)
 from database import get_db
-from services.transaction_service import create_transaction, get_transaction, authorize_transaction
+from services.transaction_service import (
+    create_transaction, 
+    get_transaction, 
+    authorize_transaction, 
+    claim_void_transaction, 
+    complete_void_transaction
+)
 from services.payment_verification import verify_order_details, verify_authorization_response
 from pydantic_models import CheckoutRequest
 
@@ -133,10 +145,13 @@ def paypal_return(db: Session = Depends(get_db), token: str | None = Query(defau
             }
         )
 
+    # Calculating the Grace Window
+    grace_deadline = datetime.now(timezone.utc) + timedelta(seconds=20)
+
     authorization_id = authorization_response["purchase_units"][0]["payments"]["authorizations"][0]["id"]
 
     # Saving authorization details in Database
-    saved = authorize_transaction(db, token, authorization_id)
+    saved = authorize_transaction(db, token, authorization_id, grace_deadline)
 
     if not saved:
         db.expire_all()
@@ -168,14 +183,93 @@ def paypal_return(db: Session = Depends(get_db), token: str | None = Query(defau
         "order_id": token,
         "authorization_id": authorization_id,
         "status": "AUTHORIZED",
-        "message": "Payment successfully authorized"
+        "message": "Payment successfully authorized",
+        "grace_deadline":grace_deadline.isoformat(),
     }
 
 
-# Cancel Endpoint
+# Cancel Endpoint (When buyer directly cancels the payment)
+# (i.e., payment status goes from "CREATED" to "CANCELLED" directly; it is NOT AUTHORIZED)
 @app.get("/paypal/cancel", response_class=JSONResponse)
 async def paypal_cancel(token: str | None = Query(default=None)):
     return {
         "message": "Buyer cancelled PayPal checkout",
         "token": token
+    }
+
+
+
+# Cancel/Void the Payment (This is when an AUTHORIZED PAYMENT is cancelled/voided)
+@app.post("/transactions/{paypal_order_id}/cancel")
+def cancel_transaction(paypal_order_id: str, db: Session = Depends(get_db)):
+    # Getting Transaction Details
+    transaction_details = get_transaction(db, paypal_order_id)
+
+    if not transaction_details:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success":False,
+                "message": "The Transaction does not exist"
+            }
+        )
+
+    if not transaction_details.paypal_authorization_id:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "success":False,
+                "message": "The Transaction is not eligible for cancellation"
+            }
+        )
+
+    # Claiming the cancellation
+    void_request_id = claim_void_transaction(db, paypal_order_id)
+
+    if void_request_id is None:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "success":False,
+                "message": "The Transaction is not eligible for cancellation"
+            }
+        )
+
+    # Voiding the payment
+    try:
+        void_response = void_authorization(transaction_details.paypal_authorization_id, void_request_id)
+        if not isinstance(void_response, dict) or void_response.get("status") != "VOIDED":
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "success": False,
+                    "message": "PayPal did not confirm the payment void"
+                }
+            )
+    except Exception:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "success":False,
+                "message": "Unable to confirm the PayPal void operation"
+            }
+        )
+
+    # Updating the Database
+    saved = complete_void_transaction(db, paypal_order_id)
+
+    if not saved:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": "PayPal void succeeded, but database update failed"
+            }
+        )
+
+    return {
+        "success": True,
+        "order_id": transaction_details.paypal_order_id,
+        "status": "VOIDED",
+        "message": "Payment successfully cancelled"
     }
