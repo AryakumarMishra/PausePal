@@ -3,6 +3,8 @@ from fastapi import FastAPI, Query, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta, timezone
+from contextlib import asynccontextmanager
+import asyncio
 
 from paypal_client import (
     create_order, 
@@ -19,9 +21,26 @@ from services.transaction_service import (
     complete_void_transaction
 )
 from services.payment_verification import verify_order_details, verify_authorization_response
+from services.capture_worker import capture_worker
 from pydantic_models import CheckoutRequest
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    worker_task = asyncio.create_task(capture_worker())
+
+    yield
+
+    worker_task.cancel()
+
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
+
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 # Checkout creation endpoint

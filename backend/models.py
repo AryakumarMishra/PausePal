@@ -22,3 +22,4 @@ class Transaction(Base):
     authorization_request_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     grace_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     void_request_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    capture_request_id: Mapped[str | None] = mapped_column(String(50), nullable=True)

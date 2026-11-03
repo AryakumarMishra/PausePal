@@ -86,8 +86,6 @@ def authorize_order(order_id, request_id):
     return data
 
 
-
-
 # Capturing the Authorized Order
 def capture_authorization(authorization_id, request_id):
     url = f"{base_url}/v2/payments/authorizations/{authorization_id}/capture"
